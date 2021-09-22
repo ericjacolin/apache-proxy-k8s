@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myproject-proxy
+  labels:
+    app: myproject-proxy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: myproject-proxy
+
+  template:
+    metadata:
+      labels:
+        app: myproject-proxy
+    spec:
+      hostAliases:
+        - ip: "10.0.2.2"
+          hostnames:
+            - "s3"
+      containers:
+        - name: myproject-proxy
+          image: myproject-proxy:bionic
+          env:
+            - name: MAILER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: myproject-proxy-sf-secrets
+                  key: MAILER_PASSWORD
+          ports:
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+        - name: adminer
+          image: adminer:4.8.0
+          ports:
+            - name: adminer-http
+              containerPort: 8080

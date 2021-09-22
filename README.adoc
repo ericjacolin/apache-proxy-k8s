@@ -1,0 +1,264 @@
+= Proxy service
+:author: Eric Jacolin
+:email: eric.jacolin@free.fr
+:revnumber: 0.1
+:revdate: 2021-09-22
+:version-label!:
+:sectnums:
+:toc:
+:toclevels: 3
+ifndef::env-github[]
+:source-highlighter: highlightjs
+:highlightjsdir: ../github/highlight
+endif::[]
+
+== Requirements
+
+A simple method to deploy an Apache web reverse proxy server on a Kubernetes cluster.
+
+The service contains:
+
+* A reverse proxy container:
+** Apache web server
+** LetsEncrypt service with Apache plugin
+** Apache PHP extension (to potentially serve static PHP web sites)
+* An Adminer container exposed behind the proxy
+** Giving web access to the database
+
+The webs server serves two types of sites:
+
+* Proxy to web applications, deployed as Kubernetes services in the same cluster
+* Local static web sites, copied from docker build context (www folder)
+
+The deployment can be:
+
+* Local: Minikube environment
+* Remote: GKE cluster
+
+The deployment has no file persistence. However by nature the LetsEncrypt configuration must be regularly updated.
+We address this problem as follows:
+
+* The `/etc/letsencrypt` folder is regularly backed up to a Cloud Storage bucket
+* At container build time, we fetch the `/etc/letsencrypt` folder from said bucket
+
+The web proxy is exposed behind a Kubernetes Service of type LoadBalancer.
+
+== Infrastructure
+
+=== Minikube
+
+To access sites from the host, outside the cluster, as required by a Service of type LoadBalancer,
+run `minikube tunnel` once Minikube is running. https://minikube.sigs.k8s.io/docs/handbook/accessing/[See]
+
+=== Container images
+
+==== Apache proxy
+
+Base image:
+
+* phusion as base image: see https://github.com/phusion/baseimage-docker
+* bionic (18.04) tag as there is not yet a Debian certbot binary available for focal (20.04)
+* modsecurity: https://www.linuxbabe.com/security/modsecurity-apache-debian-ubuntu
+
+Build parameters:
+
+* HOST_ENV: `local|remote` deployment
+* WEBMASTER_MAIL: required by Letsencrypt
+* LETSENCRYPT_BUCKET: where to store the `/etc/letsencrypt` folder backup
+
+==== Letsencrypt mode
+
+This design is based upon an original idea from https://hub.docker.com/r/birgerk/apache-letsencrypt[Dockerhub image].
+We depart from the original idea, by not using the "standard" Apache mode, whereby the certbot apache plugin:
+
+** adds a rewrite/ redirection to HTTPS directive in the port 80 conf file
+** creates a port 443 config file, cloning directive from port 80 file, and adding SSL
+directives for the location of the certificate created
+
+Main reason: this requires creating new certificates at the time of creating a container. This can fail
+for a variety of reasons, besides it might fall on the wrong side of LetsEncrypt rate limits.
+
+Instead we prime the whole LetsEncrypt configuration, including certificates on an ad-hoc VM and store it on Cloud Storage. Once done, at container creation, the container build fetches the whole `/etc/letsencrypt` folder from a bucket.
+
+==== The msmtp MTA
+
+`msmtp` is a better alternative to `sendmail`:
+
+* Much easier to configure
+* Does not require writing the hostname into `/etc/hosts`, which can't easily be done in a Kubernetes deployment
+* See configuration files in `config/msmtp`
+
+==== The my_init process
+
+The phusion container executable is a wrapper "my_init" process, which executes at start-up all
+the scripts located in the `/etc/my_init.d` folder.
+
+One of these scripts is Dockerize, which interpolates templated configuration files with actual variable values.
+
+The scripts are executed in lexicographic order of file name.
+
+The `fetch_letsencrypt.sh` script is one such, it fetches the zipped `/etc/letsencrypt` folder from Cloud Storage and copies it in the container.
+
+===== Back-up script
+
+A daily script `bkp_letsencrypt.sh` zips the `/etc/letsencrypt` folder and copies it into the Cloud Storage bucket.
+
+If for whatever reason the container needs rebuilding, it will therefore find a recent LetsEncrypt configuration.
+
+=== Adminer
+
+We use the dockerhub image without modification. It contains a web server, exposing port 8080
+
+Sadly, modsecurity needs to be disabled in the Adminer vhost as it breaks modsec rules: https://sourceforge.net/p/adminer/discussion/960417/thread/ee8d95537a/?limit=25#bcd7
+
+== Local deployment
+
+The local deployment has its separate set of vhost configuration files, and does not use TLS.
+
+=== Secrets
+
+A Kubernetes secret holds the SMTP account password.
+
+.In the local shell:
+[source,bash,subs=attributes+]
+----
+cd _secrets/apache-proxy-k8s
+kubectl apply -f proxy-secret.yml
+----
+
+=== Build container
+
+.In the local shell:
+[source,bash,subs=attributes+]
+----
+cd apache-proxy-k8s
+# Set Docker and Kubernetes contexts to Minikube
+kubectl config use-context minikube
+eval $(minikube docker-env)
+# Export env variables from config
+set -a
+source env/env.local
+# Build image
+docker build -f docker/Dockerfile.proxy \
+    -t "apache-proxy:bionic" \
+    --build-arg "HOST_ENV=${HOST_ENV}" \
+    --build-arg "LETSENCRYPT_BUCKET=${LETSENCRYPT_BUCKET}" \
+    --build-arg "WEBMASTER_MAIL=${WEBMASTER_MAIL}" \
+    --build-arg "PHP_DISPLAY_ERRORS=${PHP_DISPLAY_ERRORS}" \
+    --build-arg "PHP_ERROR_REPORTING=${PHP_ERROR_REPORTING}" \
+    --build-arg "SMTP_ACCOUNT=${SMTP_ACCOUNT}" \
+.
+# Push image
+docker push "apache-proxy:bionic"
+# Deploy image
+kubectl apply -f k8s/proxy-service.yml
+----
+
+=== Service
+
+.In the local shell:
+[source,bash,subs=attributes+]
+----
+cd apache-proxy-k8s
+kubectl config use-context minikube
+kubectl apply -f k8s/proxy-service.yml
+----
+
+== Priming LetsEncrypt
+
+We create a fully functional `/etc/letsencrypt` configuration:
+
+. The `config/sites-enabled.primer` file is a catch-all Apache vhost configuration file.
+Its only purpose is to respond satisfactorily to LetsEncrypt challenge requests on port 80.
+
+. Deploy an Apache web server on any VM
+
+. Export `$WEBMASTER_MAIL` as an environment variable in the VM
+
+. Switch your DNS to the VM's IP address
+
+. SSL into the VM and run LetsEncrypt certificate creation commands:
++
+----
+certbot certonly --expand -n --agree-tos --webroot --email $WEBMASTER_MAIL -w /var/www/html \
+    -d example.com \
+    -d www.example.com \
+    -d other.example.com
+----
+
+. Zip the `/etc/letsencrypt` folder and download it with Filezilla
++
+----
+sudo tar -czf /le.tar.gz /etc/letsencrypt
+----
+
+. Upload the file `le.tar.gz` to a Cloud storage bucket
+
+== Remote deployment
+
+=== Apache configuration
+
+Create actual vhost configuration files, in the `config/sites-enabled.remote` folder.
+
+See sample file in `config/sites-enabled.remote`
+
+These files are source controlled; modifying them entails a redeployment.
+
+.In the local shell:
+[source,bash,subs=attributes+]
+----
+cd _secrets/apache-proxy-k8s
+# switch context
+kubectl config use-context gke_myproject-123456_us-central1_cluster1
+kubectl apply -f proxy-secret.yml
+# restore context
+kubectl config use-context minikube
+----
+
+=== Build container
+
+We use the Cloud Shell for build and deploy activities. Ensure your private repo (e.g. Github) is
+accessible from the Cloud Shell.
+
+.In the Cloud shell:
+[source,bash,subs=attributes+]
+----
+cd apache-proxy-k8s
+git pull
+# Dynamic env variables
+export TAG="0.10"
+# Export env variables from config
+set -a
+source env/env.remote
+# Build image
+docker build -f docker/Dockerfile.proxy \
+    -t "gcr.io/myproject-123456/proxy:${TAG}" \
+    --build-arg "HOST_ENV=${HOST_ENV}" \
+    --build-arg "LETSENCRYPT_BUCKET=${LETSENCRYPT_BUCKET}" \
+    --build-arg "WEBMASTER_MAIL=${WEBMASTER_MAIL}" \
+    --build-arg "PHP_DISPLAY_ERRORS=${PHP_DISPLAY_ERRORS}" \
+    --build-arg "PHP_ERROR_REPORTING=${PHP_ERROR_REPORTING}" \
+    --build-arg "SMTP_ACCOUNT=${SMTP_ACCOUNT}" \
+.
+# Push image
+docker push "gcr.io/myproject-123456/proxy:${TAG}"
+# Deploy image
+cat k8s/proxy-deployment.remote.yml | sed -e "s/{{TAG}}/${TAG}/g" | kubectl apply -f -
+# Roll back image
+export PREVIOUS_TAG="0.9"
+cat k8s/proxy-deployment.remote.yml | sed -e "s/{{TAG}}${PREVIOUS_TAG}/g" | kubectl apply -f -
+----
+
+=== Service
+
+.In the Cloud shell:
+[source,bash,subs=attributes+]
+----
+cd apache-proxy-k8s
+kubectl apply -f k8s/proxy-service.yml
+----
+
+== TO DO
+
+* logrotate on ModSecurity
+* upgrade phusion from bionic to focal, when certbot binaries are available
