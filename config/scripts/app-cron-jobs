@@ -1,0 +1,2 @@
+# Add here cron jobs for your applications (assumed callable via API)
+# */5 * * * * root /usr/bin/curl -vvv -X POST -d '' http://example/api/batch-command

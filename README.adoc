@@ -111,6 +111,11 @@ We use the dockerhub image without modification. It contains a web server, expos
 
 Sadly, modsecurity needs to be disabled in the Adminer vhost as it breaks modsec rules: https://sourceforge.net/p/adminer/discussion/960417/thread/ee8d95537a/?limit=25#bcd7
 
+=== Application cron jobs
+
+You can add entries to the `config/scripts/app-cron-jobs` file. This file is copied to `/etc/cron.d`.
+It is useful if your batch jobs are exposed as API endpoints by your application containers.
+
 == Local deployment
 
 The local deployment has its separate set of vhost configuration files, and does not use TLS.

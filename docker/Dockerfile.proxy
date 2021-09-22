@@ -146,6 +146,9 @@ ADD config/scripts/20-fetch_letsencrypt.sh /etc/my_init.d/
 ADD config/scripts/bkp_letsencrypt.sh /bkp_letsencrypt.sh
 RUN echo "SHELL=/bin/bash\n0 0 * * * root HOST_ENV=$HOST_ENV LETSENCRYPT_BUCKET=$LETSENCRYPT_BUCKET /bkp_letsencrypt.sh\n" > /etc/cron.d/bkp_letsencrypt
 
+# Application cron jobs
+ADD config/scripts/app-cron-jobs /etc/cron.d/app-cron-jobs
+
 # Make scripts executable
 RUN chmod +x /*.sh && chmod +x /etc/my_init.d/*.sh && chmod +x /etc/service/apache/*
 
