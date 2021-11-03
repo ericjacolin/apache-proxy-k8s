@@ -235,9 +235,9 @@ export TAG="0.10"
 # Export env variables from config
 set -a
 source env/env.remote
-# Build image
+# Build image (adapt Artifact Repository Region "us-central1" as required)
 docker build -f docker/Dockerfile.proxy \
-    -t "gcr.io/myproject-123456/proxy:${TAG}" \
+    -t "us-central1-docker.pkg.dev/myproject-123456/my_artifact_repo/proxy:${TAG}" \
     --build-arg "HOST_ENV=${HOST_ENV}" \
     --build-arg "LETSENCRYPT_BUCKET=${LETSENCRYPT_BUCKET}" \
     --build-arg "WEBMASTER_MAIL=${WEBMASTER_MAIL}" \
@@ -246,7 +246,7 @@ docker build -f docker/Dockerfile.proxy \
     --build-arg "SMTP_ACCOUNT=${SMTP_ACCOUNT}" \
 .
 # Push image
-docker push "gcr.io/myproject-123456/proxy:${TAG}"
+docker push "us-central1-docker.pkg.dev/myproject-123456/my_artifact_repo/proxy:${TAG}"
 # Deploy image
 cat k8s/proxy-deployment.remote.yml | sed -e "s/{{TAG}}/${TAG}/g" | kubectl apply -f -
 # Roll back image

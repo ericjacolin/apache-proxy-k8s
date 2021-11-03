@@ -23,7 +23,8 @@ spec:
             - "s3"
       containers:
         - name: myproject-proxy
-          image: gcr.io/myproject-123456/myproject-proxy:{{TAG}}
+          # adapt image name
+          image: us-central1-docker.pkg.dev/myproject-123456/my_artifact_repo/myproject-proxy:{{TAG}}
           env:
             - name: MAILER_PASSWORD
               valueFrom:
