@@ -153,8 +153,6 @@ docker build -f docker/Dockerfile.proxy \
     --build-arg "PHP_ERROR_REPORTING=${PHP_ERROR_REPORTING}" \
     --build-arg "SMTP_ACCOUNT=${SMTP_ACCOUNT}" \
 .
-# Push image
-docker push "apache-proxy:bionic"
 # Deploy image
 kubectl apply -f k8s/proxy-service.yml
 ----
